@@ -1,0 +1,49 @@
+name: 自动合并上游更新
+
+on:
+  schedule:
+    # UTC 01:17 = Asia/Shanghai 09:17
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-master
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'bakedbody/DeDRM_tools'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出自己的 master 分支
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: 合并 Satsuoni 的 master 分支
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/Satsuoni/DeDRM_tools.git
+          git fetch --no-tags upstream master
+
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo 'Already up to date.'
+            exit 0
+          fi
+
+          if ! git merge --no-edit upstream/master; then
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            echo '::error::Merge conflict. Resolve it manually; no changes were pushed.'
+            exit 1
+          fi
+
+          # Never force-push: concurrent user commits must also be preserved.
+          git push origin HEAD:master
