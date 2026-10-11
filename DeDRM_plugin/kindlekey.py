@@ -40,6 +40,7 @@ Retrieve Kindle for PC/Mac user key.
 import sys, os, re
 import codecs
 from struct import pack, unpack, unpack_from
+from string import ascii_uppercase
 import json
 import getopt
 import traceback
@@ -63,9 +64,13 @@ except NameError:
 # Routines common to Mac and PC
 
 #@@CALIBRE_COMPAT_CODE@@
-
-from .utilities import SafeUnbuffered
-from .argv_utils import unicode_argv
+try:
+  from .utilities import SafeUnbuffered
+  from .argv_utils import unicode_argv
+except:
+  from utilities import SafeUnbuffered
+  from argv_utils import unicode_argv
+  
     
 
 try:
@@ -915,6 +920,83 @@ def kindlekeys(files = []):
             # key = {k.decode():v.decode() for k,v in key.items()}
             keys.append(n_key)
     return keys
+
+
+# The e-ink firmware keeps its account secret in /var/local/java/prefs/acsr, which is not
+# exported over the USB mount, so a jailbroken device's copy under de-drm-secrets is read.
+KINDLE_DEVICE_SETTING_DIRS = ('de-drm-secrets', os.path.join('documents', 'de-drm-secrets'))
+"""
+from calibre.devices.interface import currently_connected_device
+from calibre.devices.mtp.driver import MTP_DEVICE
+if isinstance(currently_connected_device.device, MTP_DEVICE):
+    mtp_device: MTP_DEVICE = currently_connected_device.device
+    books = mtp_device.books()
+    # do whatever else
+"""
+try:
+  from calibre.devices.interface import currently_connected_device
+  from calibre.devices.mtp.driver import MTP_DEVICE
+  mtp_loaded=True
+except:
+  mtp_loaded=False
+  
+def _listdir(path):
+    """os.listdir for an optional path: an absent or unreadable one yields nothing."""
+    try:
+        return os.listdir(path)
+    except OSError:
+        return []
+#def get_potential_device():
+#  from calibre.devices.scanner import DeviceScanner
+def get_potential_kindle_roots(book_root):
+    """Since there was no actual scan, but just enumeration of all possible disks, I decided to "simplify" it to this """
+    candidates=["../","../..","../../.."]
+    return [path for path in candidates if os.path.isfile(os.path.join(book_root,path, 'system', 'version.txt'))]
+
+from io import BytesIO
+def scan_for_name(nm,book_root):
+  if not mtp_loaded:
+    print("MTP driver not loaded")
+  else:
+    print("Currently connected device.device: {}".format(currently_connected_device.device))
+  if mtp_loaded and isinstance(currently_connected_device.device, MTP_DEVICE):
+    mtp_device = currently_connected_device.device
+    print("MTP device found {}".format(mtp_device))
+    pths = [('de-drm-secrets',nm),('documents','de-drm-secrets',nm)]
+    try: 
+      storages = mtp_device.filesystem_cache.entries
+    except:
+      print("No MTP storages found")
+      storages=[]
+    fdata=None
+    for  storage in storages:
+      for pth in pths:
+        file_id=storage.find_path(parts)
+        if file_id is not None:
+          data = BytesIO()
+          mtp_device.get_mtp_file(file_id, data)
+          return data.getvalue()
+  candidates=["../","../..","../../.."]
+  try:
+    from calibre.constants import config_dir
+  except:
+    print("No calibre.constants.config_dir?")
+    config_dir="."
+  candidates.append(os.path.join(config_dir,"plugins"))
+
+  for pos in candidates:
+    for dirname in KINDLE_DEVICE_SETTING_DIRS:
+      pth=os.path.join(book_root,pos,dirname,nm)
+      print("scanning {}".format(pth))
+      if os.path.isfile(pth):
+        with open(pth, 'rb') as fh:
+          return fh.read().strip()
+
+
+def get_device_setting(name,book_root):
+    """Read one device DRM setting from a mounted Kindle, or return None."""
+    return scan_for_name(name, book_root)
+
 
 # interface for Python DeDRM
 # returns single key or multiple keys, depending on path or file passed in
